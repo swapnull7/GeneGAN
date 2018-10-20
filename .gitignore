@@ -1,2 +1,5 @@
 
 *.png
+code/.DS_Store
+*.iml
+*.xml
