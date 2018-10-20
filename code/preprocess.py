@@ -150,4 +150,4 @@ def generate_slide_indices(slide_name, folder, tile_size=256, overlap=1):
                     for col in range(cols) for row in range(rows)]
     return tile_indices
 
-gene
+
