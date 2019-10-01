@@ -1,16 +1,15 @@
-import sys
 import argparse
 import os
-import random
-from openslide import open_slide, ImageSlide
+from openslide import open_slide
 import scipy.io as sio
-import pdb
 import numpy as np
 import gc
 from scipy.ndimage.morphology import binary_fill_holes
 from skimage.color import rgb2gray
 from skimage.feature import canny
 from skimage.morphology import binary_closing, binary_dilation, disk
+import tempfile
+
 
 def optical_density(tile):
     """
@@ -22,9 +21,9 @@ def optical_density(tile):
     representing optical density values.
     """
     tile = tile.astype(np.float64)
-    #od = -np.log10(tile/255 + 1e-8)
     od = -np.log((tile+1)/240)
     return od
+
 
 def keep_tile(PILtile, tile_size, tissue_threshold):
     """
@@ -94,21 +93,20 @@ def keep_tile(PILtile, tile_size, tissue_threshold):
         return False
 
 
-def generate_patches(wsi_folder, patches_folder, parsed_slides):
+def generate_patches(args, parsed_slides):
     # replace this with wsi folder
     # slide_path = '/home/ubuntu/data/TCGA_LUSC'
-    slide_path = '/mys3bucket/TCGA_LUSC/'
+    slide_path = args.raw_slides_folder # '/mys3bucket/TCGA_LUSC/'
     slides_list = os.listdir(slide_path)
-    mask_path = '/mys3bucket/tissue-masks-CMU/'
-    tar_path = '/mys3bucket/patches'
-    tmp_path = '/tmp/pathai-cmu-capstone/TCGA_LUSC'
+    mask_path = args.mask_folder if args.mask_folder else None  # '/mys3bucket/tissue-masks-CMU/'
+    tar_path = args.patches_folder  # '/mys3bucket/patches'
+    tmp_path = tempfile.mkdtemp()
+    print(f"Temporary folder for processing: {tmp_path}")
+    parsed_slides_tracker_file = args.slides_tracker
 
     samples = slides_list
-    # print(len(samples))
-    # print(samples)
+
     for slide in samples:
-        print(slide)
-        # input()
         slide_ID = slide.split('_')[0]
         # some slides have already been preprocessed, so skip these
         if slide_ID in parsed_slides or slide_ID in ['83183','83336','83423']:
@@ -128,17 +126,18 @@ def generate_patches(wsi_folder, patches_folder, parsed_slides):
 
         csv_path = os.path.join(slide_dest, slide_ID + ".csv")
         g = open(csv_path, 'a')
-        mask_src = os.path.join(mask_path, slide_ID + ".mat")
-        mask = sio.loadmat(mask_src)
-        x_coords, y_coords = np.nonzero(mask['mask'])
-        del mask
-        gc.collect()
+
+        if mask_path:
+            mask_src = os.path.join(mask_path, slide_ID + ".mat")
+            mask = sio.loadmat(mask_src)
+            x_coords, y_coords = np.nonzero(mask['mask'])
+            del mask
+            gc.collect()
 
         x_coords = x_coords * 4
         y_coords = y_coords * 4
-        # nonzero_coords = list(zip(x_coords, y_coords))
-    	# pdb.set_trace()
-        count = 0
+
+        count = 1
         sample_idxs = np.random.choice(np.arange(len(x_coords)),500)
         print("Randomly sampling patches ...")
         for i in sample_idxs:
@@ -150,9 +149,9 @@ def generate_patches(wsi_folder, patches_folder, parsed_slides):
             if keep_tile(patch,256,0.9):
                 # print("Threshold passed")
                 patch = patch.convert("RGB")
-                outfile = os.path.join(slide_dest, "patch_" + str(count+100) + ".jpg")
+                outfile = os.path.join(slide_dest, "patch_" + str(count) + ".jpg")
                 patch.save(outfile, 'JPEG')
-                g.write(("patch_"+str(count+100)+","+str(x_coords[i])+","+str(y_coords[i])+"\n"))
+                g.write(("patch_"+str(count)+","+str(x_coords[i])+","+str(y_coords[i])+"\n"))
                 count += 1 
             if count >=400:
                 break
@@ -163,7 +162,7 @@ def generate_patches(wsi_folder, patches_folder, parsed_slides):
             os.remove(os.path.join(tmp_path,slide))
             print("File "+str(slide)+" flushed from tmp")
         print("Writing parsed slide to slide list")
-        write_parsed_slides(slide_ID)
+        write_parsed_slides(slide_ID, parsed_slides_tracker_file)
         print('----------------------')
 
 
@@ -181,39 +180,59 @@ def parse_arguments():
         '--patches_folder',
         type=str,
         default='',
-        help='folder contatining patches generated from slides')
+        help='folder containing patches generated from slides')
+    parser.add_argument(
+        '-t',
+        '--slides_tracker_file',
+        type=str,
+        default='./slides_new.list',
+        help='File containing all names of slides sampled from')
+    parser.add_argument(
+        '-m',
+        '--mask_folder',
+        type=str,
+        default='',
+        help='folder containing patches generated from slides')
 
     args = parser.parse_args()
     return args
 
-def write_parsed_slides(slideID):
-    f = open('./slides_new.list', 'a')
-    f.write(str(slideID)+"\n")
-    f.close()
+
+def write_parsed_slides(slideID, parsed_slides_tracker_file):
+    """
+
+    :param slideID: String with slife
+    :return:
+    """
+    with open(parsed_slides_tracker_file, 'a') as f:
+        f.write(str(slideID)+"\n")
     return
 
-def find_parsed_slides(folder):
+
+def find_parsed_slides(tracker_file):
+    """
+
+    :param tracker_file: File to keep track of parsed slides incase of failures.
+    :return: Returns a set of all slides that are sampled from or used to create training patches
+    """
     parsed_folder = set()
-    f = open('./slides_new.list', 'r')
+    f = open(tracker_file, 'r')
     for line in f:
         parsed_folder.add(line.strip())
     f.close()
-    # print(parsed_folder)
- 
-    # for filename in os.listdir(folder):
-    #    basename, extension = os.path.splitext(filename)
-    #    parsed_folder.add(basename.split('_')[-1])
+
     return parsed_folder
 
 
 def main():
-    # args = parse_arguments()
-    # wsi_slides_folder = args.raw_slides_folder
-    wsi_slides_folder = '/mys3bucket/TCGA_LUSC/'
-    patches_folder = '/mys3bucket/patches/'
+    """
+    Takes in arguments from CLI for raw slides folder and folder to store the patches in
+    """
+    args = parse_arguments()
+    parsed_slides_tracker_file = args.slides_tracker
 
-    parsed_slides = find_parsed_slides(patches_folder)
-    generate_patches(wsi_slides_folder, patches_folder, parsed_slides)
+    parsed_slides = find_parsed_slides(parsed_slides_tracker_file)
+    generate_patches(args, parsed_slides)
 
 
 if __name__ == '__main__':
