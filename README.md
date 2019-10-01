@@ -20,4 +20,17 @@ generate wsi images.
 
 1. `python preprocess.py [-h] -s raw_slides_folder -p patches_output_folder 
 [-t parsed_slides_folder] [-m masks_folder_if_exists]`
-2. 
+2. `python dcgan.py` 
+
+
+## Results
+
+The result of the trained DCGAN after about 42 epochs were as below
+
+![Generated Images](./images/generated.png)
+
+The Samples generated from the wsi slides look like
+![Sample Training Image](./images/patch_11.jpg) 
+
+The different in the color of the training and generated images is because the during training, the images were normalized
+per channel from the overall distribution of the training images 
